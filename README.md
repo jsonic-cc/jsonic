@@ -30,7 +30,7 @@ Jsonic++ parses, represents, queries and serializes ordinary JSON. It deliberate
 
 ## Vendored copies
 
-Jsonic++ is the intended canonical standalone owner of the parser header. Nift vendors it at `jsonic/json.h`; Minify++ currently vendors the same parser privately at `src/Json.h`. Synchronization is checked with:
+Jsonic++ is the intended canonical standalone owner of the parser header. Nift mirrors the standalone project under `jsonic/` and consumes `jsonic/include/json.h`; Minify++ currently vendors the same parser privately at `src/Json.h`. Synchronization is checked with:
 
 ```bash
 make check-nift-sync NIFT_DIR=/path/to/nift

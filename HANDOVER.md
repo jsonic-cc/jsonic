@@ -17,7 +17,7 @@ Jsonic++ is the standalone canonical project for the small dependency-free C++17
 
 Current synchronized consumers:
 
-1. **Nift core** vendors the exact header at `nift/jsonic/json.h`. `nift/src/Json.h` is intentionally only a compatibility wrapper so historical Nift includes remain stable.
+1. **Nift core** vendors the exact header at `nift/jsonic/include/json.h`. `nift/src/Json.h` is intentionally only a compatibility wrapper so historical Nift includes remain stable.
 2. **Minify++** vendors the same header privately at `minify/src/Json.h` because Minify++ remains independently vendorable/dependency-free.
 3. **Nift's embedded Minify++** mirrors standalone Minify++, including its private `src/Json.h`; therefore a Jsonic++ change ultimately has to reconcile all three copies.
 
@@ -26,7 +26,7 @@ The maintenance direction is:
 ```text
 Jsonic++ include/json.h
         ↓ validate standalone
-Nift jsonic/json.h
+Nift jsonic/include/json.h
         ↓ Nift JSON/schema/parser/incremental tests
 Minify++ src/Json.h
         ↓ Minify++ full format/semantic tests
