@@ -30,8 +30,10 @@ int main() {
     assert(json::Document::parse(serialized, reparsed, error));
     assert(reparsed["extra"].string == "value");
 
-    // Structural errors and ambiguous objects.
-    expect_invalid(R"({"a":1,"a":2})");
+    // Structural errors. Duplicate names are valid JSON syntax and are
+    // preserved in source order, even though applications should avoid them.
+    assert(json::Document::parse(R"({"a":1,"a":2})", document, error));
+    assert(document.object.size() == 2);
     expect_invalid(R"([1,])");
     expect_invalid(R"({"a":1,})");
     expect_invalid(R"({"a" 1})");

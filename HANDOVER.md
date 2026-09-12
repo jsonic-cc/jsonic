@@ -62,6 +62,11 @@ make test-sanitize
 
 For lifetime/resource-safety work, `make memory-safety-checkpoint-1a` runs the maintained long-lived Jsonic++ corpus under ASan/LSan/UBSan and a separate non-sanitized RSS soak. `make valgrind-memory-safety-checkpoint-1a` is the independent Linux confirmation gate when Valgrind is available. Checkpoint 1A validated the corpus without requiring a parser implementation change. Checkpoint 1B then passed independently under Valgrind 3.26.0 on Linux: 40 corpus iterations, 0 errors, 0 bytes in use at exit, all 6,579,515 allocations freed. Exact evidence is recorded in `docs/MEMORY-SAFETY.md` and `docs/evidence/memory-safety-checkpoint-1b-valgrind.json`.
 
+The independent `jsonic-cc/jsonic-conformance` repository is now the external
+correctness gate. Its initial 810-case corpus found and permanently tests
+duplicate-member acceptance, malformed raw UTF-8 rejection and bounded nesting.
+Jsonic++ must retain 810/810 before benchmark work or public conformance claims.
+
 and then the relevant Nift/Minify++ integration suites after synchronization. External conformance corpora and fuzzing are desirable production gates; preserve exact corpus/version evidence rather than converting one successful run into a timeless claim.
 
 ## Human-directed agentic engineering

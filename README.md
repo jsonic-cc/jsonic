@@ -30,6 +30,10 @@ make test-sanitize
 
 Jsonic++ parses, represents, queries and serializes ordinary JSON. It deliberately does not try to become a JSON ecosystem containing JSON Pointer, Patch, binary encodings, schema frameworks, networking or package-manager machinery.
 
+The parser validates unescaped UTF-8, preserves duplicate object members in
+source order, and rejects inputs deeper than 512 nested arrays/objects before
+they can exhaust the process stack.
+
 ## Vendored copies
 
 Jsonic++ is the intended canonical standalone owner of the parser header. Nift mirrors the standalone project under `jsonic/` and consumes `jsonic/include/json.h`; Minify++ currently vendors the same parser privately at `src/Json.h`. Synchronization is checked with:

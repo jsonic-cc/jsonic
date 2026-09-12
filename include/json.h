@@ -210,12 +210,13 @@ private:
     public:
         explicit Parser(const std::string& source) : source_(source) {}
 
-        Document parse_value() {
+        Document parse_value(std::size_t depth = 0) {
+            if (depth > max_nesting_depth) fail("maximum JSON nesting depth exceeded");
             skip_whitespace();
             if (finished()) fail("expected JSON value");
             switch (peek()) {
-                case '{': return parse_object();
-                case '[': return parse_array();
+                case '{': return parse_object(depth);
+                case '[': return parse_array(depth);
                 case '"': return Document(parse_string());
                 case 't': consume_literal("true"); return Document(true);
                 case 'f': consume_literal("false"); return Document(false);
@@ -243,6 +244,7 @@ private:
         }
 
     private:
+        static constexpr std::size_t max_nesting_depth = 512;
         const std::string& source_;
         std::size_t position_ = 0;
 
@@ -267,22 +269,19 @@ private:
             }
         }
 
-        Document parse_object() {
+        Document parse_object(std::size_t depth) {
             expect('{', "expected '{'");
             Document result = Document::make_object();
             result.object.reserve(4);
-            std::unordered_set<std::string> keys;
-            keys.reserve(8);
             skip_whitespace();
             if (consume('}')) return result;
             while (true) {
                 skip_whitespace();
                 if (finished() || peek() != '"') fail("expected quoted object key");
                 std::string key = parse_string();
-                if (!keys.insert(key).second) fail("duplicate object key '" + key + "'");
                 skip_whitespace();
                 expect(':', "expected ':' after object key");
-                result.object.emplace_back(std::move(key), parse_value());
+                result.object.emplace_back(std::move(key), parse_value(depth + 1));
                 skip_whitespace();
                 if (consume('}')) break;
                 expect(',', "expected ',' between object members");
@@ -290,14 +289,14 @@ private:
             return result;
         }
 
-        Document parse_array() {
+        Document parse_array(std::size_t depth) {
             expect('[', "expected '['");
             Document result = Document::make_array();
             result.array.reserve(4);
             skip_whitespace();
             if (consume(']')) return result;
             while (true) {
-                result.array.push_back(parse_value());
+                result.array.push_back(parse_value(depth + 1));
                 skip_whitespace();
                 if (consume(']')) break;
                 expect(',', "expected ',' between array members");
@@ -354,6 +353,50 @@ private:
             return 0x10000u + ((first - 0xd800u) << 10u) + (second - 0xdc00u);
         }
 
+        std::size_t validate_utf8_sequence(std::size_t start, std::size_t end) const {
+            const auto byte = [&](std::size_t offset) {
+                return static_cast<unsigned char>(source_[offset]);
+            };
+            const auto continuation = [&](std::size_t offset) {
+                return offset < end && byte(offset) >= 0x80 && byte(offset) <= 0xbf;
+            };
+            const unsigned char first = byte(start);
+            std::size_t length = 0;
+            if (first >= 0xc2 && first <= 0xdf) {
+                length = 2;
+            } else if (first >= 0xe0 && first <= 0xef) {
+                length = 3;
+            } else if (first >= 0xf0 && first <= 0xf4) {
+                length = 4;
+            } else {
+                throw ParseError("invalid UTF-8 in JSON string", start);
+            }
+            if (start + length > end)
+                throw ParseError("incomplete UTF-8 sequence in JSON string", start);
+            for (std::size_t i = 1; i < length; ++i) {
+                if (!continuation(start + i))
+                    throw ParseError("invalid UTF-8 continuation byte in JSON string", start + i);
+            }
+            const unsigned char second = byte(start + 1);
+            if ((first == 0xe0 && second < 0xa0) ||
+                (first == 0xed && second > 0x9f) ||
+                (first == 0xf0 && second < 0x90) ||
+                (first == 0xf4 && second > 0x8f))
+                throw ParseError("invalid UTF-8 scalar value in JSON string", start);
+            return start + length;
+        }
+
+        void validate_utf8_range(std::size_t start, std::size_t end) const {
+            while (start < end) {
+                const unsigned char c = static_cast<unsigned char>(source_[start]);
+                if (c < 0x80) {
+                    ++start;
+                } else {
+                    start = validate_utf8_sequence(start, end);
+                }
+            }
+        }
+
         std::string parse_string() {
             expect('"', "expected string");
             const std::size_t raw_start = position_;
@@ -362,6 +405,7 @@ private:
                 const unsigned char c = static_cast<unsigned char>(source_[scan]);
                 if (c == '"') {
                     const std::size_t length = scan - raw_start;
+                    validate_utf8_range(raw_start, scan);
                     position_ = scan + 1;
                     return source_.substr(raw_start, length);
                 }
@@ -375,6 +419,13 @@ private:
                 char c = advance();
                 if (c == '"') return result;
                 if (static_cast<unsigned char>(c) < 0x20) fail("control character in JSON string");
+                if (static_cast<unsigned char>(c) >= 0x80) {
+                    const std::size_t start = position_ - 1;
+                    const std::size_t finish = validate_utf8_sequence(start, source_.size());
+                    result.append(source_, start, finish - start);
+                    position_ = finish;
+                    continue;
+                }
                 if (c != '\\') { result.push_back(c); continue; }
                 if (finished()) fail("incomplete escape sequence");
                 switch (advance()) {
