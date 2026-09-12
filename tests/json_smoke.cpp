@@ -49,6 +49,20 @@ int main() {
     assert(json::Document::parse("-0.25e+2", document, error));
     assert(document.is_number() && document.num == -25.0);
 
+    // Bounded views do not require a null terminator and must not consume
+    // adjacent bytes. Extreme values exercise the precise strtod fallback.
+    const std::string padded_array = "[1,2] trailing";
+    assert(json::Document::parse(std::string_view(padded_array.data(), 5), document, error));
+    assert(document.is_array() && document.array.size() == 2);
+    const std::string padded_number = "12x";
+    assert(json::Document::parse(std::string_view(padded_number.data(), 2), document, error));
+    assert(document.is_number() && document.num == 12.0);
+    const std::string underflow = "1e-10000x";
+    assert(json::Document::parse(std::string_view(underflow.data(), 8), document, error));
+    assert(document.is_number() && document.num == 0.0);
+    const std::string overflow = "1e309x";
+    assert(!json::Document::parse(std::string_view(overflow.data(), 5), document, error));
+
     // String escapes / Unicode surrogate handling.
     expect_invalid(R"("\x")");
     expect_invalid(R"("\uDE00")");

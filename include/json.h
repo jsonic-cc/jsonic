@@ -10,6 +10,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_set>
 
@@ -90,6 +91,14 @@ public:
     }
 
     static bool parse(const std::string& text, Document& result, std::string& error) {
+        return parse(std::string_view(text), result, error);
+    }
+
+    static bool parse(const char* text, Document& result, std::string& error) {
+        return parse(std::string_view(text), result, error);
+    }
+
+    static bool parse(std::string_view text, Document& result, std::string& error) {
         Parser parser(text);
         try {
             result = parser.parse_value();
@@ -190,7 +199,7 @@ private:
             : std::runtime_error(message), position(p) {}
     };
 
-    static std::pair<std::size_t, std::size_t> line_column(const std::string& source, std::size_t position) {
+    static std::pair<std::size_t, std::size_t> line_column(std::string_view source, std::size_t position) {
         std::size_t line = 1;
         std::size_t column = 1;
         const std::size_t end = std::min(position, source.size());
@@ -208,7 +217,7 @@ private:
     class Parser {
         friend class Document;
     public:
-        explicit Parser(const std::string& source) : source_(source) {}
+        explicit Parser(std::string_view source) : source_(source) {}
 
         Document parse_value(std::size_t depth = 0) {
             if (depth > max_nesting_depth) fail("maximum JSON nesting depth exceeded");
@@ -245,7 +254,7 @@ private:
 
     private:
         static constexpr std::size_t max_nesting_depth = 512;
-        const std::string& source_;
+        std::string_view source_;
         std::size_t position_ = 0;
 
         char peek() const { return source_[position_]; }
@@ -292,7 +301,7 @@ private:
         Document parse_array(std::size_t depth) {
             expect('[', "expected '['");
             Document result = Document::make_array();
-            result.array.reserve(4);
+            result.array.reserve(2);
             skip_whitespace();
             if (consume(']')) return result;
             while (true) {
@@ -407,7 +416,7 @@ private:
                     const std::size_t length = scan - raw_start;
                     validate_utf8_range(raw_start, scan);
                     position_ = scan + 1;
-                    return source_.substr(raw_start, length);
+                    return std::string(source_.substr(raw_start, length));
                 }
                 if (c == '\\' || c < 0x20) break;
                 ++scan;
@@ -422,7 +431,7 @@ private:
                 if (static_cast<unsigned char>(c) >= 0x80) {
                     const std::size_t start = position_ - 1;
                     const std::size_t finish = validate_utf8_sequence(start, source_.size());
-                    result.append(source_, start, finish - start);
+                    result.append(source_.data() + start, finish - start);
                     position_ = finish;
                     continue;
                 }
@@ -466,7 +475,17 @@ private:
                 if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) fail("invalid exponent");
                 while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) advance();
             }
-            const double value = std::strtod(source_.c_str() + start, nullptr);
+            const char* number_start = source_.data() + start;
+            const char* number_end = source_.data() + position_;
+            double value = 0.0;
+            const std::from_chars_result converted =
+                std::from_chars(number_start, number_end, value, std::chars_format::general);
+            if (converted.ec == std::errc::result_out_of_range) {
+                const std::string token(source_.substr(start, position_ - start));
+                value = std::strtod(token.c_str(), nullptr);
+            } else if (converted.ec != std::errc() || converted.ptr != number_end) {
+                fail("invalid JSON number");
+            }
             if (!std::isfinite(value)) fail("JSON number is outside the supported finite range");
             return value;
         }

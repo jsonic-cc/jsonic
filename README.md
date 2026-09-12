@@ -17,7 +17,7 @@ if (!json::Document::parse(R"({"name":"Jsonic++"})", value, error)) {
 std::cout << value["name"].string << "\n";
 ```
 
-The public header is deliberately just `include/json.h`. The API remains the existing `json` namespace and `json::Document` value type used by Nift.
+The public header is deliberately just `include/json.h`. The API remains the existing `json` namespace and `json::Document` value type used by Nift. Parsing accepts `std::string`, null-terminated `const char*`, and bounded `std::string_view` input; the view overload avoids copying the source buffer.
 
 ## Build and test
 
