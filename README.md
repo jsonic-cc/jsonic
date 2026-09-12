@@ -19,6 +19,8 @@ std::cout << value["name"].string << "\n";
 
 The public header is deliberately just `include/json.h`. The API remains the existing `json` namespace and `json::Document` value type used by Nift. Parsing accepts `std::string`, null-terminated `const char*`, and bounded `std::string_view` input; the view overload avoids copying the source buffer.
 
+Parsed numbers normally use the compact `Type::Number` double representation. Values whose integer precision, signed/fractional zero, or floating-point boundary spelling would otherwise be lost use `Type::StrNumber` internally. Both satisfy `is_number()` and expose the converted value through `num`, while serialization preserves the significant original representation.
+
 ## Build and test
 
 ```bash

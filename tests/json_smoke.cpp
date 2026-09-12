@@ -49,6 +49,27 @@ int main() {
     assert(json::Document::parse("-0.25e+2", document, error));
     assert(document.is_number() && document.num == -25.0);
 
+    // Numbers whose original JSON spelling cannot be reproduced by the
+    // compact double representation retain that spelling internally while
+    // remaining numbers through the public predicates and numeric field.
+    assert(json::Document::parse("0.0", document, error));
+    assert(document.type == json::Type::StrNumber && document.is_number());
+    assert(document.num == 0.0 && document.dump(0) == "0.0");
+    assert(json::Document::parse("1234567890123456789", document, error));
+    assert(document.type == json::Type::StrNumber && document.is_number());
+    assert(document.dump(0) == "1234567890123456789");
+    assert(json::Document::parse("42", document, error));
+    assert(document.type == json::Type::Number && document.dump(0) == "42");
+    const char* exact_numbers[] = {
+        "-1234567890123456789", "1234567890123456789", "9223372036854775807",
+        "0.0", "-0.0", "5e-324", "2.225073858507201e-308",
+        "2.2250738585072014e-308", "1.7976931348623157e308"
+    };
+    for (const char* exact : exact_numbers) {
+        assert(json::Document::parse(exact, document, error));
+        assert(document.is_number() && document.dump(0) == exact);
+    }
+
     // Bounded views do not require a null terminator and must not consume
     // adjacent bytes. Extreme values exercise the precise strtod fallback.
     const std::string padded_array = "[1,2] trailing";

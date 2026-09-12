@@ -18,7 +18,7 @@
 // This header can be copied into another C++17 project and used independently.
 namespace json {
 
-enum class Type { Null, Boolean, Number, String, Array, Object };
+enum class Type { Null, Boolean, Number, StrNumber, String, Array, Object };
 
 class Document {
 public:
@@ -42,7 +42,7 @@ public:
 
     bool is_null() const { return type == Type::Null; }
     bool is_bool() const { return type == Type::Boolean; }
-    bool is_number() const { return type == Type::Number; }
+    bool is_number() const { return type == Type::Number || type == Type::StrNumber; }
     bool is_string() const { return type == Type::String; }
     bool is_array() const { return type == Type::Array; }
     bool is_object() const { return type == Type::Object; }
@@ -232,7 +232,7 @@ private:
                 case 'n': consume_literal("null"); return Document(nullptr);
                 default:
                     if (peek() == '-' || std::isdigit(static_cast<unsigned char>(peek())))
-                        return Document(parse_number());
+                        return parse_number();
                     fail("unexpected character while parsing JSON");
             }
             return {};
@@ -454,9 +454,9 @@ private:
             return {};
         }
 
-        double parse_number() {
+        Document parse_number() {
             std::size_t start = position_;
-            consume('-');
+            const bool negative = consume('-');
             if (finished()) fail("invalid JSON number");
             if (consume('0')) {
                 if (!finished() && std::isdigit(static_cast<unsigned char>(peek())))
@@ -465,15 +465,24 @@ private:
                 if (!std::isdigit(static_cast<unsigned char>(peek()))) fail("invalid JSON number");
                 while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) advance();
             }
-            if (consume('.')) {
+            const std::size_t integer_digits = position_ - start - (negative ? 1u : 0u);
+            const bool has_fraction = consume('.');
+            if (has_fraction) {
                 if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) fail("invalid fraction");
                 while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) advance();
             }
+            bool has_exponent = false;
+            unsigned exponent_magnitude = 0;
             if (!finished() && (peek() == 'e' || peek() == 'E')) {
+                has_exponent = true;
                 advance();
                 if (!finished() && (peek() == '+' || peek() == '-')) advance();
                 if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) fail("invalid exponent");
-                while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) advance();
+                while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) {
+                    if (exponent_magnitude < 300)
+                        exponent_magnitude = exponent_magnitude * 10u + static_cast<unsigned>(peek() - '0');
+                    advance();
+                }
             }
             const char* number_start = source_.data() + start;
             const char* number_end = source_.data() + position_;
@@ -487,9 +496,37 @@ private:
                 fail("invalid JSON number");
             }
             if (!std::isfinite(value)) fail("JSON number is outside the supported finite range");
-            return value;
+
+            const std::string_view token(number_start, static_cast<std::size_t>(number_end - number_start));
+            bool may_need_exact_spelling =
+                (!has_exponent && !has_fraction && integer_digits > 15) ||
+                (value == 0.0 && (has_fraction || negative)) ||
+                exponent_magnitude >= 300;
+
+            Document result(value);
+            char canonical[64];
+            const char* canonical_end = may_need_exact_spelling
+                ? format_number(canonical, canonical + sizeof(canonical), value)
+                : nullptr;
+            if (may_need_exact_spelling &&
+                (canonical_end == nullptr || token != std::string_view(canonical, canonical_end - canonical))) {
+                result.type = Type::StrNumber;
+                result.string.assign(token.data(), token.size());
+            }
+            return result;
         }
     };
+
+    static char* format_number(char* begin, char* end, double value) {
+        std::to_chars_result converted;
+        if (std::floor(value) == value &&
+            value >= -9223372036854775808.0 && value < 9223372036854775808.0) {
+            converted = std::to_chars(begin, end, static_cast<long long>(value));
+        } else {
+            converted = std::to_chars(begin, end, value, std::chars_format::general);
+        }
+        return converted.ec == std::errc() ? converted.ptr : nullptr;
+    }
 
     static void append_escaped(std::string& out, const std::string& value) {
         static constexpr char hex[] = "0123456789abcdef";
@@ -528,20 +565,14 @@ private:
                 break;
             case Type::Number: {
                 char buffer[64];
-                char* begin = buffer;
-                char* finish = buffer + sizeof(buffer);
-                std::to_chars_result converted;
-                if (std::floor(value.num) == value.num &&
-                    value.num >= static_cast<double>(std::numeric_limits<long long>::min()) &&
-                    value.num <= static_cast<double>(std::numeric_limits<long long>::max())) {
-                    converted = std::to_chars(begin, finish, static_cast<long long>(value.num));
-                } else {
-                    converted = std::to_chars(begin, finish, value.num, std::chars_format::general, 15);
-                }
-                if (converted.ec == std::errc()) out.append(begin, converted.ptr);
+                char* converted = format_number(buffer, buffer + sizeof(buffer), value.num);
+                if (converted != nullptr) out.append(buffer, converted);
                 else out += "0";
                 break;
             }
+            case Type::StrNumber:
+                out += value.string;
+                break;
             case Type::String:
                 out.push_back('"');
                 append_escaped(out, value.string);
