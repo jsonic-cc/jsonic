@@ -15,7 +15,7 @@ Jsonic++ is the standalone canonical project for the small dependency-free C++17
 - Public header: `include/json.h`.
 - Public namespace/type: `json::Document` plus `json::Type`.
 - Toolchain: C++17; header-only parser/value implementation.
-- Product boundary: parse JSON correctly, represent/query values, serialize when useful, and provide actionable errors. Do not grow into JSON Pointer/Patch, binary encodings, networking, schema frameworks, or a general serialization platform without a separately justified contract.
+- Product boundary: parse JSON correctly, represent/query values, serialize when useful, and provide actionable errors. Strict RFC 8259 parsing is the default; configuration consumers may independently opt into comments and trailing commas. Do not grow into JSON Pointer/Patch, binary encodings, networking, schema frameworks, or a general serialization platform without a separately justified contract.
 
 ## Source of truth and vendoring
 
@@ -52,6 +52,17 @@ make check-minify-sync MINIFY_DIR=/path/to/minify
 ## Testing contract
 
 Parser work should test both acceptance and rejection. Important families include JSON grammar, number grammar/range handling, duplicate keys, escapes, Unicode surrogate handling, deeply nested structures, serialization round trips, named-array streaming, malformed/error paths, and memory/lifetime safety.
+
+The additive parsing surface consists of `ParseOptions`,
+`DuplicateKeyPolicy`, and `ParseDiagnostic`. Preserve these contracts:
+
+- no options means strict RFC 8259 JSON;
+- comments and trailing commas are independent opt-ins;
+- duplicate members are preserved by default and rejected only on request;
+- diagnostic offsets are zero-based bytes while lines/columns are one-based;
+- 512 remains the default depth limit, and consumers may lower it;
+- do not burden every `Document` with source spans without a separately proven
+  consumer need.
 
 A substantial parser checkpoint should run at least:
 

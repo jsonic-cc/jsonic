@@ -39,6 +39,34 @@ int main() {
     expect_invalid(R"({"a" 1})");
     expect_invalid(R"({a:1})");
 
+    // Strict JSON remains the default. JSON with Comments is available only
+    // through explicit parser options.
+    expect_invalid("// comment\n{\"a\":1}");
+    expect_invalid(R"({"a":1,})");
+    json::ParseOptions jsonc;
+    jsonc.allow_comments = true;
+    jsonc.allow_trailing_commas = true;
+    const std::string jsonc_source =
+        "/* leading */ {\n"
+        "  \"url\": \"https://example.test//not-a-comment\",\n"
+        "  \"items\": [1, /* between */ 2,], // line comment\n"
+        "}\n";
+    assert(json::Document::parse(jsonc_source, document, error, jsonc));
+    assert(document["url"].string == "https://example.test//not-a-comment");
+    assert(document["items"].array.size() == 2);
+
+    json::ParseDiagnostic diagnostic;
+    assert(!json::Document::parse("{\n  \"a\": 1,\n  nope\n}", document, diagnostic));
+    assert(diagnostic.message == "expected quoted object key");
+    assert(diagnostic.offset == 14);
+    assert(diagnostic.line == 3 && diagnostic.column == 3);
+
+    json::ParseOptions reject_duplicates;
+    reject_duplicates.duplicate_keys = json::DuplicateKeyPolicy::Reject;
+    assert(!json::Document::parse(R"({"a":1,"a":2})", document, diagnostic,
+                                  reject_duplicates));
+    assert(diagnostic.message == "duplicate object key 'a'");
+
     // Number grammar and finite-range handling.
     expect_invalid("01");
     expect_invalid("-01");
@@ -98,6 +126,12 @@ int main() {
         R"({"tracked":[],"tracked":[]})", "tracked",
         [&](json::Document&&) { callback_called = true; return true; }, error));
     assert(!callback_called);
+
+    std::size_t streamed_items = 0;
+    assert(json::Document::for_each_array_item(
+        "{/* config */\"tracked\":[1,2,],}", "tracked",
+        [&](json::Document&&) { ++streamed_items; return true; }, error, jsonc));
+    assert(streamed_items == 2);
 
     std::cout << "JSON smoke test passed\n";
 }

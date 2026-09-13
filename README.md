@@ -21,6 +21,30 @@ The public header is deliberately just `include/json.h`. The API remains the exi
 
 Parsed numbers normally use the compact `Type::Number` double representation. Values whose integer precision, signed/fractional zero, or floating-point boundary spelling would otherwise be lost use `Type::StrNumber` internally. Both satisfy `is_number()` and expose the converted value through `num`, while serialization preserves the significant original representation.
 
+## Parsing options and diagnostics
+
+Parsing is strict RFC 8259 JSON by default. Configuration-file consumers can
+explicitly enable comments and trailing commas without changing that default:
+
+```cpp
+json::ParseOptions options;
+options.allow_comments = true;
+options.allow_trailing_commas = true;
+options.duplicate_keys = json::DuplicateKeyPolicy::Reject;
+
+json::ParseDiagnostic diagnostic;
+if (!json::Document::parse(source, value, diagnostic, options)) {
+    std::cerr << diagnostic.message << " at "
+              << diagnostic.line << ':' << diagnostic.column << '\n';
+}
+```
+
+`ParseDiagnostic` exposes the zero-based byte `offset` and one-based `line` and
+`column`. `ParseOptions::max_depth` defaults to 512 and can be lowered for a
+particular input boundary. The existing error-string overloads remain
+available, and the streaming `for_each_array_item()` API accepts the same
+options. Duplicate members remain preserved in source order by default.
+
 ## Build and test
 
 ```bash
@@ -30,10 +54,13 @@ make test-sanitize
 
 ## Scope
 
-Jsonic++ parses, represents, queries and serializes ordinary JSON. It deliberately does not try to become a JSON ecosystem containing JSON Pointer, Patch, binary encodings, schema frameworks, networking or package-manager machinery.
+Jsonic++ parses, represents, queries and serializes ordinary JSON, with a small
+opt-in JSON-with-comments profile for configuration files. It deliberately does
+not try to become a JSON ecosystem containing JSON Pointer, Patch, binary
+encodings, schema frameworks, networking or package-manager machinery.
 
 The parser validates unescaped UTF-8, preserves duplicate object members in
-source order, and rejects inputs deeper than 512 nested arrays/objects before
+source order, and rejects inputs deeper than the configured nesting limit before
 they can exhaust the process stack.
 
 ## Vendored copies

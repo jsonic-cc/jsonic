@@ -13,12 +13,30 @@
 #include <string_view>
 #include <vector>
 #include <unordered_set>
+#include <utility>
+#include <type_traits>
 
 // A small, self-contained JSON implementation for Nift.
 // This header can be copied into another C++17 project and used independently.
 namespace json {
 
 enum class Type { Null, Boolean, Number, StrNumber, String, Array, Object };
+
+enum class DuplicateKeyPolicy { Preserve, Reject };
+
+struct ParseOptions {
+    bool allow_comments = false;
+    bool allow_trailing_commas = false;
+    DuplicateKeyPolicy duplicate_keys = DuplicateKeyPolicy::Preserve;
+    std::size_t max_depth = 512;
+};
+
+struct ParseDiagnostic {
+    std::string message;
+    std::size_t offset = 0;
+    std::size_t line = 1;
+    std::size_t column = 1;
+};
 
 class Document {
 public:
@@ -99,18 +117,68 @@ public:
     }
 
     static bool parse(std::string_view text, Document& result, std::string& error) {
-        Parser parser(text);
-        try {
-            result = parser.parse_value();
-            parser.skip_whitespace();
-            if (!parser.finished()) parser.fail("unexpected characters after JSON value");
-            return true;
-        } catch (const ParseError& e) {
-            const auto [line, column] = line_column(text, e.position);
-            error = std::string(e.what()) + " at line " + std::to_string(line) +
-                    ", column " + std::to_string(column);
-            return false;
-        }
+        return parse(text, result, error, ParseOptions{});
+    }
+
+    static bool parse(const std::string& text, Document& result, std::string& error,
+                      const ParseOptions& options) {
+        return parse(std::string_view(text), result, error, options);
+    }
+
+    static bool parse(const char* text, Document& result, std::string& error,
+                      const ParseOptions& options) {
+        return parse(std::string_view(text), result, error, options);
+    }
+
+    static bool parse(std::string_view text, Document& result, std::string& error,
+                      const ParseOptions& options) {
+        const auto run = [&](auto comments) {
+            Parser<decltype(comments)::value> parser(text, options);
+            try {
+                result = parser.parse_value();
+                parser.skip_whitespace();
+                if (!parser.finished()) parser.fail("unexpected characters after JSON value");
+                return true;
+            } catch (const ParseError& e) {
+                const auto [line, column] = line_column(text, e.position);
+                error = std::string(e.what()) + " at line " + std::to_string(line) +
+                        ", column " + std::to_string(column);
+                return false;
+            }
+        };
+        return options.allow_comments ? run(std::true_type{}) : run(std::false_type{});
+    }
+
+    static bool parse(const std::string& text, Document& result, ParseDiagnostic& diagnostic,
+                      const ParseOptions& options = {}) {
+        return parse(std::string_view(text), result, diagnostic, options);
+    }
+
+    static bool parse(const char* text, Document& result, ParseDiagnostic& diagnostic,
+                      const ParseOptions& options = {}) {
+        return parse(std::string_view(text), result, diagnostic, options);
+    }
+
+    static bool parse(std::string_view text, Document& result, ParseDiagnostic& diagnostic,
+                      const ParseOptions& options = {}) {
+        const auto run = [&](auto comments) {
+            Parser<decltype(comments)::value> parser(text, options);
+            try {
+                result = parser.parse_value();
+                parser.skip_whitespace();
+                if (!parser.finished()) parser.fail("unexpected characters after JSON value");
+                diagnostic = {};
+                return true;
+            } catch (const ParseError& e) {
+                const auto [line, column] = line_column(text, e.position);
+                diagnostic.message = e.what();
+                diagnostic.offset = e.position;
+                diagnostic.line = line;
+                diagnostic.column = column;
+                return false;
+            }
+        };
+        return options.allow_comments ? run(std::true_type{}) : run(std::false_type{});
     }
 
     // Parses a named array directly from a root JSON object and invokes the
@@ -121,7 +189,15 @@ public:
     template <typename Callback>
     static bool for_each_array_item(const std::string& text, const std::string& member,
                                     Callback&& callback, std::string& error) {
-        Parser parser(text);
+        return for_each_array_item(text, member, std::forward<Callback>(callback), error,
+                                   ParseOptions{});
+    }
+
+    template <typename Callback>
+    static bool for_each_array_item(const std::string& text, const std::string& member,
+                                    Callback&& callback, std::string& error,
+                                    const ParseOptions& options) {
+        Parser<true> parser(text, options);
         try {
             parser.skip_whitespace();
             parser.expect('{', "expected root JSON object");
@@ -153,6 +229,12 @@ public:
                                 parser.skip_whitespace();
                                 if (parser.consume(']')) break;
                                 parser.expect(',', "expected ',' between array members");
+                                parser.skip_whitespace();
+                                if (parser.consume(']')) {
+                                    if (!options.allow_trailing_commas)
+                                        parser.fail("trailing comma in array");
+                                    break;
+                                }
                             }
                         }
                     } else {
@@ -162,6 +244,12 @@ public:
                     parser.skip_whitespace();
                     if (parser.consume('}')) break;
                     parser.expect(',', "expected ',' between object members");
+                    parser.skip_whitespace();
+                    if (parser.consume('}')) {
+                        if (!options.allow_trailing_commas)
+                            parser.fail("trailing comma in object");
+                        break;
+                    }
                 }
             }
             parser.skip_whitespace();
@@ -214,13 +302,15 @@ private:
         return {line, column};
     }
 
+    template <bool AllowComments>
     class Parser {
         friend class Document;
     public:
-        explicit Parser(std::string_view source) : source_(source) {}
+        Parser(std::string_view source, const ParseOptions& options)
+            : source_(source), options_(options) {}
 
         Document parse_value(std::size_t depth = 0) {
-            if (depth > max_nesting_depth) fail("maximum JSON nesting depth exceeded");
+            if (depth > options_.max_depth) fail("maximum JSON nesting depth exceeded");
             skip_whitespace();
             if (finished()) fail("expected JSON value");
             switch (peek()) {
@@ -241,8 +331,30 @@ private:
         void skip_whitespace() {
             while (!finished()) {
                 const char c = peek();
-                if (c != ' ' && c != '\n' && c != '\r' && c != '\t') break;
-                advance();
+                if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                    advance();
+                    continue;
+                }
+                if constexpr (!AllowComments) {
+                    break;
+                }
+                if (!options_.allow_comments || c != '/' || position_ + 1 >= source_.size()) break;
+                const char next = source_[position_ + 1];
+                if (next == '/') {
+                    position_ += 2;
+                    while (!finished() && peek() != '\n' && peek() != '\r') advance();
+                    continue;
+                }
+                if (next == '*') {
+                    position_ += 2;
+                    while (position_ + 1 < source_.size() &&
+                           !(source_[position_] == '*' && source_[position_ + 1] == '/'))
+                        advance();
+                    if (position_ + 1 >= source_.size()) fail("unterminated block comment");
+                    position_ += 2;
+                    continue;
+                }
+                break;
             }
         }
 
@@ -253,8 +365,8 @@ private:
         }
 
     private:
-        static constexpr std::size_t max_nesting_depth = 512;
         std::string_view source_;
+        ParseOptions options_;
         std::size_t position_ = 0;
 
         char peek() const { return source_[position_]; }
@@ -288,12 +400,19 @@ private:
                 skip_whitespace();
                 if (finished() || peek() != '"') fail("expected quoted object key");
                 std::string key = parse_string();
+                if (options_.duplicate_keys == DuplicateKeyPolicy::Reject && result.has(key))
+                    fail("duplicate object key '" + key + "'");
                 skip_whitespace();
                 expect(':', "expected ':' after object key");
                 result.object.emplace_back(std::move(key), parse_value(depth + 1));
                 skip_whitespace();
                 if (consume('}')) break;
                 expect(',', "expected ',' between object members");
+                skip_whitespace();
+                if (consume('}')) {
+                    if (!options_.allow_trailing_commas) fail("trailing comma in object");
+                    break;
+                }
             }
             return result;
         }
@@ -309,6 +428,11 @@ private:
                 skip_whitespace();
                 if (consume(']')) break;
                 expect(',', "expected ',' between array members");
+                skip_whitespace();
+                if (consume(']')) {
+                    if (!options_.allow_trailing_commas) fail("trailing comma in array");
+                    break;
+                }
             }
             return result;
         }
